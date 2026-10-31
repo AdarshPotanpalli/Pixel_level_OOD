@@ -1,0 +1,5 @@
+pytorch-ood 
+torchvision 
+torch
+git+https://github.com/hermannsblum/bdl-benchmark.git
+tensorflow
