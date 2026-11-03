@@ -11,8 +11,8 @@ from tqdm import tqdm
 from src import Jet
 from src.util import bits_per_dim # calculates the normalised nll in bits per dimension
 from src.util import cosine_schedule # learning rate scheduler with warmup and cosine decay
-from src.util import ImageDataset # Dataset class to load images
-from src.util import preprocess # preprocesses the images before training
+from src.util import FeatureWindowDataset # Dataset class to load feature patches
+# from src.util import preprocess # preprocesses the images before training
 
 
 def train(
@@ -25,22 +25,22 @@ def train(
     learning_rate=3e-4,
     weight_decay=1e-5, # AdamW weight decay
     adam_betas=(0.9, 0.95), # coffecients of AdamW
-    images_path_train="/mnt/wsl/l/imagenet_downsampled", # images train path
-    images_path_valid="/mnt/wsl/l/imagenet_downsampled", # images validation path
+    features_path_train="/mnt/wsl/l/train_features", # feature maps train path
+    features_path_valid="/mnt/wsl/l/val_features", # feature maps validation path
     num_workers=16,
     device="cuda:0",
-    checkpoint_path="jet_imagenet.pt", # path where checkpoint is saved
+    checkpoint_path="jet_dino.pt", # path where checkpoint is saved
 ):
     t.set_float32_matmul_precision("medium") # precision for pytorch matrix multiplication set to medium
 
-    # converts images to dataset (from utils)
-    dataset = ImageDataset(
-        images_path_train,
-        transform=v2.ToDtype(t.float32, scale=True), # transform to float 32 and scale it to range 0 to 1
+    # converts feature patches to dataset (from utils)
+    dataset = FeatureWindowDataset(
+        features_path_train
+        # transform=v2.ToDtype(t.float32, scale=True), # transform to float 32 and scale it to range 0 to 1
     )
-    val_dataset = ImageDataset(
-        images_path_valid,
-        transform=v2.ToDtype(t.float32, scale=True),
+    val_dataset = FeatureWindowDataset(
+        features_path_valid
+        # transform=v2.ToDtype(t.float32, scale=True),
     )
 
     dim_count = np.prod(dataset[0].shape) # total number of scalar dimensions in one sample, for 64 X 64 X 3 image is 12288
@@ -59,7 +59,7 @@ def train(
         val_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        shuffle=True,
+        shuffle=False,
     )
 
     orig_model = Jet(**jet_config) # initialize Jet model
@@ -94,7 +94,8 @@ def train(
         pbar = tqdm(dataloader, total=len(dataloader) // accumulate_steps) # progress bar
 
         for x in dataloader:
-            x = preprocess(x).to(device) # preprocesses the batch
+            # x = preprocess(x).to(device) # preprocesses the batch
+            x = x.to(device)
 
             with t.autocast("cuda", dtype=t.bfloat16): # automatic mixed precision, torch selects operations which can go with lower precision bf16
                 logits, logdet = model(x) # forward pass
@@ -147,7 +148,8 @@ def train(
         pbar = tqdm(val_dataloader, total=len(val_dataloader))
         with t.no_grad():
             for x in val_dataloader:
-                x = preprocess(x).to(device)
+                # x = preprocess(x).to(device)
+                x = x.to(device)
 
                 with t.autocast("cuda", dtype=t.bfloat16):
                     logits, logdet = model(x)

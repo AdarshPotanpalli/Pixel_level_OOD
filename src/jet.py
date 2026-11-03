@@ -73,19 +73,19 @@ def precision(precision): # sets the precision of pytorch model, using with
 class Jet(nn.Module):
     def __init__(
         self,
-        patch_size: int = 4, # 4X4
-        patch_dim: int = 48, # a 4X4 patch having three channels which is flattened (so basically, a 48 dim feature vector)
-        n_patches: int = 256, # imagenet was 64X64 thats why 256 patches
-        img_dims: Tuple[int, int] = (64, 64),
-        coupling_layers: int = 32,
-        block_depth: int = 2, # number of vit encoder blocks inside each coupling layer
+        patch_size: int = 1, # 1X1
+        patch_dim: int = 768, # a single feature vector in dinov3 base has 768 dim
+        n_patches: int = 9, # we are using 3X3 patch grid, so 9 patches
+        img_dims: Tuple[int, int] = (3, 3),
+        coupling_layers: int = 16,
+        block_depth: int = 4, # number of vit encoder blocks inside each coupling layer
         block_width: int = 512, # number of hidden dimensions
         num_heads: int = 8, # number of attention heads in multi head self attention
         scale_factor: float = 2.0, # m
         coupling_types: Tuple[str] = (
             "channels", "channels",
             "channels", "channels",
-            "spatial",
+            # "spatial",
         ),
         spatial_coupling_projs: Tuple[str] = (
             "checkerboard", "checkerboard-inv",
@@ -147,7 +147,7 @@ class Jet(nn.Module):
     def patchify(self, x: t.Tensor):
         return einops.rearrange(
             x,
-            "b (h hp) (w wp) c -> b (h w) (hp wp c)", # converts B X 64 X 64 X 3 to B X 256 X 48, derives the value of h and w
+            "b (h hp) (w wp) c -> b (h w) (hp wp c)", # converts B X 3 X 3 X D to B X 9 X D, derives the value of h and w
             hp=self.patch_size,
             wp=self.patch_size,
         )
@@ -202,9 +202,9 @@ class Jet(nn.Module):
 class Coupling(nn.Module):
     def __init__(
         self,
-        patch_dim: int = 48,
+        patch_dim: int = 768,
         depth: int = 1,
-        n_patches: int = 256,
+        n_patches: int = 9,
         width: int = 256,
         num_heads: int = 4,
         scale_factor: float = 2.0,
@@ -240,30 +240,30 @@ class Coupling(nn.Module):
             x = t.einsum("ntk,km->ntm", x, channel_proj.T) # multiply with transpose of channel projection matrix, to get back the original channel sequence
         return x
 
-    @autocast(enabled=False, device_type="cuda")
-    def _split_spatial(
-        self, x: t.Tensor, spatial_proj: t.Tensor
-    ) -> Tuple[t.Tensor, t.Tensor]:
-        with precision("highest"):
-            x = t.einsum("ntk,tm->nmk", x, spatial_proj)
-        x1, x2 = t.chunk(x, 2, dim=-2) # split into 2 parts along the 2nd last dimension, which is number of patches.. (B X 128 X 48)
+    # @autocast(enabled=False, device_type="cuda")
+    # def _split_spatial(
+    #     self, x: t.Tensor, spatial_proj: t.Tensor
+    # ) -> Tuple[t.Tensor, t.Tensor]:
+    #     with precision("highest"):
+    #         x = t.einsum("ntk,tm->nmk", x, spatial_proj)
+    #     x1, x2 = t.chunk(x, 2, dim=-2) # split into 2 parts along the 2nd last dimension, which is number of patches.. (B X 128 X 48)
 
-        # since DNN expects 24 features per token to scale and shift 2nd part
-        x1 = einops.rearrange(x1, "... n (s c) -> ... (n s) c", s=2)# (B X 128 X 48) into (B X 256 X 24).. this is done because DNN expects out_dim / 2
-        x2 = einops.rearrange(x2, "... n (s c) -> ... (n s) c", s=2)
-        return x1, x2
+    #     # since DNN expects 24 features per token to scale and shift 2nd part
+    #     x1 = einops.rearrange(x1, "... n (s c) -> ... (n s) c", s=2)# (B X 128 X 48) into (B X 256 X 24).. this is done because DNN expects out_dim / 2
+    #     x2 = einops.rearrange(x2, "... n (s c) -> ... (n s) c", s=2)
+    #     return x1, x2
 
-    @autocast(enabled=False, device_type="cuda")
-    def _merge_spatial(
-        self, x1: t.Tensor, x2: t.Tensor, spatial_proj: t.Tensor
-    ) -> t.Tensor:
-        x1 = einops.rearrange(x1, "... (n s) c -> ... n (s c)", s=2)
-        x2 = einops.rearrange(x2, "... (n s) c -> ... n (s c)", s=2)
+    # @autocast(enabled=False, device_type="cuda")
+    # def _merge_spatial(
+    #     self, x1: t.Tensor, x2: t.Tensor, spatial_proj: t.Tensor
+    # ) -> t.Tensor:
+    #     x1 = einops.rearrange(x1, "... (n s) c -> ... n (s c)", s=2)
+    #     x2 = einops.rearrange(x2, "... (n s) c -> ... n (s c)", s=2)
 
-        x = t.cat([x1, x2], dim=-2) # concatenate on the 2nd last dimension
-        with precision("highest"):
-            x = t.einsum("ntk,tm->nmk", x, spatial_proj.T)
-        return x
+    #     x = t.cat([x1, x2], dim=-2) # concatenate on the 2nd last dimension
+    #     with precision("highest"):
+    #         x = t.einsum("ntk,tm->nmk", x, spatial_proj.T)
+    #     return x
 
     def _setup(
         self,
