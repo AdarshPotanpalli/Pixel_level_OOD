@@ -27,12 +27,13 @@ def train(
     adam_betas=(0.9, 0.95), # coffecients of AdamW
     features_path_train="/mnt/wsl/l/train_features", # feature maps train path
     features_path_valid="/mnt/wsl/l/val_features", # feature maps validation path
-    num_workers=16,
-    device="cuda:0",
+    num_workers=4,
+    device="cuda",
     checkpoint_path="jet_dino.pt", # path where checkpoint is saved
 ):
     t.set_float32_matmul_precision("medium") # precision for pytorch matrix multiplication set to medium
 
+    print(f"[INFO] Creating train and val dataset")
     # converts feature patches to dataset (from utils)
     dataset = FeatureWindowDataset(
         features_path_train
@@ -45,29 +46,32 @@ def train(
 
     dim_count = np.prod(dataset[0].shape) # total number of scalar dimensions in one sample, for 64 X 64 X 3 image is 12288
     
+    print(f"[INFO] Creating train and val dataloader")
     # train and val dataloader
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=num_workers,
         drop_last=True, # drops the last incomplete batch
-        pin_memory=True,
-        pin_memory_device=device,
+        pin_memory=t.cuda.is_available(),
         shuffle=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
+        pin_memory= t.cuda.is_available(),
         shuffle=False,
     )
 
+    print(f"[INFO] Creating JeT model based on given configuration")
     orig_model = Jet(**jet_config) # initialize Jet model
     orig_model = orig_model.to(device)
-    print(orig_model)
+    # print(orig_model)
     print(f"# Params: {sum(p.numel() for p in orig_model.parameters() if p.requires_grad):,}") # number of trainable params
     model = t.compile(orig_model) # uses PyTorch 2's compilation addon, makes training faster basically
 
+    print(f"[INFO] Configuring optmizer and lr scheduler")
     opt = t.optim.AdamW(
         model.parameters(),
         betas=adam_betas,
@@ -90,6 +94,7 @@ def train(
     log_nll = 0.0 # accumulated nll
     log_logdet = 0.0 # accumulated log determinant
 
+    print(f"[INFO] Starting training loop")
     for epoch in range(epochs):
         pbar = tqdm(dataloader, total=len(dataloader) // accumulate_steps) # progress bar
 
@@ -97,9 +102,11 @@ def train(
             # x = preprocess(x).to(device) # preprocesses the batch
             x = x.to(device)
 
-            with t.autocast("cuda", dtype=t.bfloat16): # automatic mixed precision, torch selects operations which can go with lower precision bf16
-                logits, logdet = model(x) # forward pass
-                bpd, nll, logdet = bits_per_dim(logits, logdet, dim_count) # bpd is the training objective
+            # with t.autocast(device_type=device, dtype=t.bfloat16): # automatic mixed precision, torch selects operations which can go with lower precision bf16
+            logits, logdet = model(x) # forward pass
+            print(f"[DEBUG] logits: {logits}, logdet: {logdet}")
+            bpd, nll, logdet = bits_per_dim(logits, logdet, dim_count) # bpd is the training objective
+            print(f"[DEBUG] bpd: {bpd}, nll: {nll}")
 
             bpd /= accumulate_steps # divide the training objective by accumulated steps, 
             bpd.backward() # grads will be accumulated 16 times
@@ -167,5 +174,5 @@ def train(
         model.train()
 
 
-if __name__ == "__main__":
-    fire.Fire(train)
+# if __name__ == "__main__":
+#     fire.Fire(train)

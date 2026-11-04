@@ -113,45 +113,35 @@ def bits_per_dim(logits, logdet, dim_count, pdf=None): # logits is the transform
 
 class FeatureWindowDataset(Dataset):
     def __init__(self, feature_dir):
-        self.windows = []
+        # Store only file paths (costs almost zero RAM)
+        self.feature_paths = sorted(Path(feature_dir).rglob("*.pt"))
 
-        # gets the feature paths from the sub directories of feature_dir
-        feature_paths = sorted(Path(feature_dir).rglob("*.pt"))
-
-        for feature_path in feature_paths:
-            features = t.load(feature_path, map_location="cpu")
-
-            if isinstance(features, dict):
-                features = features["features"]
-
-            features = features.float()
-
-            # Expected input: (H, W, 768)
-            # Convert to (1, 768, H, W)
-            features = features.permute(2, 0, 1).unsqueeze(0)
-
-            # Extract all 3x3 windows
-            patches = F.unfold(features, kernel_size=3, stride=1)
-
-            # (1, 768*9, N) -> (N, 768*9) , here N is number of extracted 3X3 patches from a feature map
-            patches = patches.squeeze(0).transpose(0, 1)
-
-            # (N, 768*9) -> (N, 3, 3, 768), finally
-            patches = patches.reshape(-1, 768, 3, 3) # -1 infers the first dim, its N
-            patches = patches.permute(0, 2, 3, 1).contiguous()
-
-            self.windows.append(patches)
-
-        if not self.windows:
+        if not self.feature_paths:
             raise RuntimeError(f"No feature maps found in {feature_dir}")
 
-        self.windows = t.cat(self.windows, dim=0)
-
     def __len__(self):
-        return len(self.windows)
+        return len(self.feature_paths)
 
     def __getitem__(self, index):
-        return self.windows[index]
+        # Load single file dynamically into RAM
+        feature_path = self.feature_paths[index]
+        features = t.load(feature_path, map_location="cpu")
+
+        if isinstance(features, dict):
+            features = features["features"]
+
+        features = features.float()
+
+        # Convert to (1, 384, H, W)
+        features = features.permute(2, 0, 1).unsqueeze(0)
+
+        # Extract 3x3 windows
+        patches = F.unfold(features, kernel_size=3, stride=1)
+        patches = patches.squeeze(0).transpose(0, 1)
+        patches = patches.reshape(-1, 384, 3, 3).permute(0, 2, 3, 1).contiguous()
+
+        # Returns all patches extracted from this single image
+        return patches
 
 # ===================== Dataset (with purity threshold) for class conditional ==============
 
