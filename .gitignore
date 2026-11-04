@@ -1,3 +1,5 @@
 venv
 myvenv
 dataset/
+*__pycache__*
+*.pyc

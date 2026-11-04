@@ -112,36 +112,46 @@ def bits_per_dim(logits, logdet, dim_count, pdf=None): # logits is the transform
 
 
 class FeatureWindowDataset(Dataset):
-    def __init__(self, feature_dir):
-        # Store only file paths (costs almost zero RAM)
+    def __init__(self, feature_dir, spatial_shape=(64, 128), kernel_size=3, stride=1):
+        # Store file paths without loading large tensors into RAM
         self.feature_paths = sorted(Path(feature_dir).rglob("*.pt"))
-
         if not self.feature_paths:
             raise RuntimeError(f"No feature maps found in {feature_dir}")
 
+        H, W = spatial_shape
+        # Total 3x3 grids per 64x128 map: (64 - 3 + 1) * (128 - 3 + 1) = 62 * 126 = 7812
+        self.patches_per_image = (H - kernel_size + 1) * (W - kernel_size + 1)
+        self.total_patches = len(self.feature_paths) * self.patches_per_image
+
     def __len__(self):
-        return len(self.feature_paths)
+        # Total dataset size is now the sum of all 3x3 patches across all files
+        return self.total_patches
 
     def __getitem__(self, index):
-        # Load single file dynamically into RAM
-        feature_path = self.feature_paths[index]
+        # Map global dataset index to (file_idx, patch_idx inside that file)
+        file_idx = index // self.patches_per_image
+        patch_idx = index % self.patches_per_image
+
+        # Load only the required feature map file
+        feature_path = self.feature_paths[file_idx]
         features = t.load(feature_path, map_location="cpu")
 
         if isinstance(features, dict):
             features = features["features"]
 
-        features = features.float()
+        features = features.float()  # Expected shape: (64, 128, 384)
+        C = features.shape[-1]       # 384 channels
 
-        # Convert to (1, 384, H, W)
+        # Convert (64, 128, 384) -> (1, 384, 64, 128)
         features = features.permute(2, 0, 1).unsqueeze(0)
 
-        # Extract 3x3 windows
+        # Extract all 3x3 windows -> shape: (7812, 3, 3, 384)
         patches = F.unfold(features, kernel_size=3, stride=1)
         patches = patches.squeeze(0).transpose(0, 1)
-        patches = patches.reshape(-1, 384, 3, 3).permute(0, 2, 3, 1).contiguous()
+        patches = patches.reshape(-1, C, 3, 3).permute(0, 2, 3, 1).contiguous()
 
-        # Returns all patches extracted from this single image
-        return patches
+        # Return a single 3x3 patch grid of shape (3, 3, 384)
+        return patches[patch_idx]
 
 # ===================== Dataset (with purity threshold) for class conditional ==============
 

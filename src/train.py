@@ -69,7 +69,10 @@ def train(
     orig_model = orig_model.to(device)
     # print(orig_model)
     print(f"# Params: {sum(p.numel() for p in orig_model.parameters() if p.requires_grad):,}") # number of trainable params
-    model = t.compile(orig_model) # uses PyTorch 2's compilation addon, makes training faster basically
+    if device == "cpu":
+        model = orig_model
+    else:
+        model = t.compile(orig_model) # uses PyTorch 2's compilation addon, makes training faster basically
 
     print(f"[INFO] Configuring optmizer and lr scheduler")
     opt = t.optim.AdamW(
@@ -104,9 +107,9 @@ def train(
 
             # with t.autocast(device_type=device, dtype=t.bfloat16): # automatic mixed precision, torch selects operations which can go with lower precision bf16
             logits, logdet = model(x) # forward pass
-            print(f"[DEBUG] logits: {logits}, logdet: {logdet}")
+            # print(f"[DEBUG] logits: {logits}, logdet: {logdet}")
             bpd, nll, logdet = bits_per_dim(logits, logdet, dim_count) # bpd is the training objective
-            print(f"[DEBUG] bpd: {bpd}, nll: {nll}")
+            # print(f"[DEBUG] bpd: {bpd}, nll: {nll}")
 
             bpd /= accumulate_steps # divide the training objective by accumulated steps, 
             bpd.backward() # grads will be accumulated 16 times

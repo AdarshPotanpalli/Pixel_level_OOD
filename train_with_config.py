@@ -24,10 +24,10 @@ jet_config = dict(
 if __name__ == "__main__":
     train(
         jet_config=jet_config,
-        batch_size=4,
-        accumulate_steps=4,
+        batch_size=64,
+        accumulate_steps=16,
         device="cpu",
-        epochs=50,
+        epochs=100,
         warmup_percentage=0.1,
         max_grad_norm=1.0,
         learning_rate=3e-4,
@@ -35,6 +35,6 @@ if __name__ == "__main__":
         adam_betas=(0.9, 0.95),
         features_path_train="dataset/cityscapes/cityscapes_dinov3_vits_features/train",
         features_path_valid="dataset/cityscapes/cityscapes_dinov3_vits_features/val",
-        num_workers=1, # during debug set it to 1
+        num_workers=4, # during debug set it to 1
         checkpoint_path="jet_dino.pt",
     )
