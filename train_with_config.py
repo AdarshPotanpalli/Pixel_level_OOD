@@ -35,6 +35,6 @@ if __name__ == "__main__":
         adam_betas=(0.9, 0.95),
         features_path_train="dataset/cityscapes/cityscapes_dinov3_vits_features/train",
         features_path_valid="dataset/cityscapes/cityscapes_dinov3_vits_features/val",
-        num_workers=4, # during debug set it to 1
+        num_workers=1, # during debug set it to 1
         checkpoint_path="jet_dino.pt",
     )

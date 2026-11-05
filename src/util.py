@@ -2,7 +2,7 @@ import math
 import os
 from functools import partial
 from pathlib import Path
-
+import time
 import torch as t
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
@@ -107,7 +107,37 @@ def bits_per_dim(logits, logdet, dim_count, pdf=None): # logits is the transform
         nll.mean() / normalizer,
         logdet.mean() / normalizer
     )
-    
+
+# ================ Dataset for full feature maps =========================
+
+from pathlib import Path
+import torch as t
+from torch.utils.data import Dataset
+
+
+class RawFeatureDataset(Dataset):
+
+  def __init__(self, feature_dir):
+    # Store sorted paths (near-zero RAM usage)
+    self.feature_paths = sorted(Path(feature_dir).rglob("*.pt"))
+    if not self.feature_paths:
+      raise RuntimeError(f"No feature map files found in {feature_dir}")
+
+  def __len__(self):
+    # The dataset size is simply the number of feature map files on disk
+    return len(self.feature_paths)
+
+  def __getitem__(self, index):
+    # 1. Load single file into CPU RAM
+    feature_path = self.feature_paths[index]
+    features = t.load(feature_path, map_location="cpu")
+
+    if isinstance(features, dict):
+      features = features["features"]
+
+    # 2. Return raw feature map tensor: shape (64, 128, 384)
+    return features.float()
+
 # ================ Dataset for 3X3 feature map patches ====================
 
 
@@ -129,12 +159,15 @@ class FeatureWindowDataset(Dataset):
 
     def __getitem__(self, index):
         # Map global dataset index to (file_idx, patch_idx inside that file)
+        start_time = time.perf_counter()
         file_idx = index // self.patches_per_image
         patch_idx = index % self.patches_per_image
+        print(f"Got file and patch index in : {time.perf_counter() - start_time} sec")
 
         # Load only the required feature map file
         feature_path = self.feature_paths[file_idx]
-        features = t.load(feature_path, map_location="cpu")
+        features = t.load(feature_path, map_location="cpu") # loading a feature map for every patch index
+        print(f"Loaded the features in : {time.perf_counter() - start_time} sec")
 
         if isinstance(features, dict):
             features = features["features"]
@@ -144,11 +177,14 @@ class FeatureWindowDataset(Dataset):
 
         # Convert (64, 128, 384) -> (1, 384, 64, 128)
         features = features.permute(2, 0, 1).unsqueeze(0)
+        print(f"Permuted the features in : {time.perf_counter() - start_time} sec")
 
         # Extract all 3x3 windows -> shape: (7812, 3, 3, 384)
         patches = F.unfold(features, kernel_size=3, stride=1)
+        print(f"Unfolded the patches in : {time.perf_counter() - start_time} sec")
         patches = patches.squeeze(0).transpose(0, 1)
         patches = patches.reshape(-1, C, 3, 3).permute(0, 2, 3, 1).contiguous()
+        print(f"Unsqueezed and reshaped the patches in : {time.perf_counter() - start_time} sec")
 
         # Return a single 3x3 patch grid of shape (3, 3, 384)
         return patches[patch_idx]
