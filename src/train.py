@@ -16,6 +16,7 @@ from src.util import FeatureWindowDataset, RawFeatureDataset
 
 def train(
     jet_config={}, # configuration bassed to jet
+    image_batch_size=4,
     batch_size=64, 
     accumulate_steps=16, # number of mini batches accumulated before optimizer update, this means effective batch size is 64X16
     epochs=50,
@@ -45,11 +46,11 @@ def train(
 
     print(f"[INFO] Creating train and val dataloader")
     dataloader = DataLoader(
-        dataset, batch_size=1, num_workers=num_workers, drop_last=True,
+        dataset, batch_size=image_batch_size, num_workers=num_workers, drop_last=True,
         pin_memory=t.cuda.is_available(), shuffle=True,
     )
     val_dataloader = DataLoader(
-        val_dataset, batch_size=1, num_workers=num_workers,
+        val_dataset, batch_size=image_batch_size, num_workers=num_workers,
         pin_memory=t.cuda.is_available(), shuffle=False,
     )
 
@@ -68,7 +69,7 @@ def train(
     patches_per_image = (h - 3 + 1) * (w - 3 + 1)
     batches_per_image = int(np.ceil(patches_per_image / batch_size))
     
-    total_steps = ((len(dataloader) * batches_per_image) // accumulate_steps) * epochs
+    total_steps = ((len(dataset) * batches_per_image) // accumulate_steps) * epochs
     warmup_steps = int(total_steps * warmup_percentage)
     
     scheduler = cosine_schedule(
@@ -133,7 +134,7 @@ def train(
         val_patch_batches = 0
         
         # FIX 3: Fix validation progress bar total
-        val_pbar = tqdm(total=len(val_dataloader) * batches_per_image, desc="Validating", leave=False)
+        val_pbar = tqdm(total=len(val_dataset) * batches_per_image, desc="Validating", leave=False)
         
         with t.no_grad():
             for image_feature_map in val_dataloader:
