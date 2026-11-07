@@ -6,3 +6,6 @@ einops
 tqdm
 huggingface_hub
 safetensors
+transformers
+matplotlib
+python-dotenv

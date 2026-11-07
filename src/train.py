@@ -98,10 +98,10 @@ def train(
             for i in range(0, total_image_patches, batch_size):
                 x = patches[i : i + batch_size]
                 
-                with t.autocast("cuda", dtype=t.bfloat16):
-                    logits, logdet = model(x)
-                    # Use the corrected patch dimensions here
-                    bpd, nll, logdet = bits_per_dim(logits, logdet, patch_dim_count)
+                # with t.autocast("cuda", dtype=t.float16):
+                logits, logdet = model(x)
+                # Use the corrected patch dimensions here
+                bpd, nll, logdet = bits_per_dim(logits, logdet, patch_dim_count)
                 
                 bpd_scaled = bpd / accumulate_steps
                 bpd_scaled.backward()
@@ -149,9 +149,9 @@ def train(
                 for i in range(0, total_image_patches, batch_size):
                     x = patches[i : i + batch_size]
                     
-                    with t.autocast("cuda", dtype=t.bfloat16):
-                        logits, logdet = model(x)
-                        bpd, nll, logdet = bits_per_dim(logits, logdet, patch_dim_count)
+                    # with t.autocast("cuda", dtype=t.float16):
+                    logits, logdet = model(x)
+                    bpd, nll, logdet = bits_per_dim(logits, logdet, patch_dim_count)
                     
                     val_bpd += bpd.detach().cpu().item()
                     val_nll += nll.detach().cpu().item()

@@ -107,6 +107,25 @@ def bits_per_dim(logits, logdet, dim_count, pdf=None): # logits is the transform
         nll.mean() / normalizer,
         logdet.mean() / normalizer
     )
+    
+# bits_per_dim per patch sample
+def bits_per_dim_per_patch(logits, logdet, dim_count, pdf=None):
+  if pdf is None:
+    pdf = Normal(0.0, 1.0)
+
+  nll = -pdf.log_prob(logits)
+  nll = t.sum(nll, dim=tuple(range(1, nll.dim())))  # Sum across spatial/channel dims, keep batch dim
+  logdet = logdet.squeeze()
+
+  bits = nll - logdet
+  normalizer = t.log(t.tensor(2.0, device=nll.device)) * dim_count
+
+  # REMOVE .mean() so it returns 1D tensors of shape (B,)
+  bpd = bits / normalizer
+  nll_val = nll / normalizer
+  logdet_val = logdet / normalizer
+
+  return bpd, nll_val, logdet_val
 
 # ================ Dataset for full feature maps =========================
 
