@@ -1,5 +1,5 @@
 import os
-
+import json
 import fire
 import numpy as np
 import torch as t
@@ -28,10 +28,29 @@ def train(
     features_path_train="/mnt/wsl/l/train_features", # feature maps train path
     features_path_valid="/mnt/wsl/l/val_features", # feature maps validation path
     num_workers=2,
+    patch_stride=3,
     device="cuda",
     checkpoint_path="jet_dino.pt",
+    best_checkpoint_path="best_jet_dino.pt",
+    log_dir="logs",
+    patience=5,
+    min_delta=1e-4,
 ):
     t.set_float32_matmul_precision("medium")
+    
+    # Setup logging directory and file paths
+    os.makedirs(log_dir, exist_ok=True)
+    csv_log_path = os.path.join(log_dir, "metrics.csv")
+    json_log_path = os.path.join(log_dir, "metrics.json")
+
+    if not os.path.exists(csv_log_path):
+        with open(csv_log_path, "w") as f:
+            f.write("epoch,val_bpd,val_nll,val_logdet,lr\n")
+
+    metrics_history = []
+    best_val_bpd = float("inf")
+    patience_counter = 0
+
     print(f"[INFO] Creating train and val dataset")
     
     dataset = RawFeatureDataset(features_path_train)
@@ -66,7 +85,7 @@ def train(
     # Calculate exact total patch mini-batches to fix scheduler and progress bar totals
     # Unfold on (64, 128) with kernel 3, stride 1 yields: (64-3+1) * (128-3+1) = 62 * 126 = 7812 patches per image
     h, w, c = sample_shape
-    patches_per_image = (h - 3 + 1) * (w - 3 + 1)
+    patches_per_image = ((h - 3) // 3 + 1) * ((w - 3) // 3 + 1)
     batches_per_image = int(np.ceil(patches_per_image / batch_size))
     
     total_steps = ((len(dataset) * batches_per_image) // accumulate_steps) * epochs
@@ -91,7 +110,7 @@ def train(
             b, h, w, c = image_feature_map.shape
             
             x_perm = image_feature_map.permute(0, 3, 1, 2)
-            patches = F.unfold(x_perm, kernel_size=3, stride=1)
+            patches = F.unfold(x_perm, kernel_size=3, stride=patch_stride)
             patches = patches.transpose(1, 2).reshape(-1, c, 3, 3).permute(0, 2, 3, 1).contiguous()
             
             total_image_patches = patches.shape[0]
@@ -142,7 +161,7 @@ def train(
                 b, h, w, c = image_feature_map.shape
                 
                 x_perm = image_feature_map.permute(0, 3, 1, 2)
-                patches = F.unfold(x_perm, kernel_size=3, stride=1)
+                patches = F.unfold(x_perm, kernel_size=3, stride=patch_stride)
                 patches = patches.transpose(1, 2).reshape(-1, c, 3, 3).permute(0, 2, 3, 1).contiguous()
                 
                 total_image_patches = patches.shape[0]
@@ -166,6 +185,39 @@ def train(
         val_nll /= val_patch_batches
         val_logdet /= val_patch_batches
         print(f"Epoch {epoch+1} Validation Metrics - bpd: {val_bpd:.4f}, nll: {val_nll:.4f}, logdet: {val_logdet:.4f}")
+
+        # -------------------------------------------------------------
+        # Log validation metrics & execute early stopping
+        # -------------------------------------------------------------
+        curr_lr = scheduler.get_last_lr()[0]
+        
+        log_entry = {
+            "epoch": epoch + 1,
+            "val_bpd": val_bpd,
+            "val_nll": val_nll,
+            "val_logdet": val_logdet,
+            "lr": curr_lr
+        }
+        metrics_history.append(log_entry)
+
+        with open(csv_log_path, "a") as f:
+            f.write(f"{epoch+1},{val_bpd:.6f},{val_nll:.6f},{val_logdet:.6f},{curr_lr:.8f}\n")
+
+        with open(json_log_path, "w") as f:
+            json.dump(metrics_history, f, indent=4)
+
+        # Early stopping logic (patience = 5 epochs)
+        if val_bpd < (best_val_bpd - min_delta):
+            print(f"  [+] Validation BPD improved from {best_val_bpd:.4f} to {val_bpd:.4f}. Saving best model.")
+            best_val_bpd = val_bpd
+            patience_counter = 0
+            t.save(dict(model=orig_model.state_dict(), opt=opt.state_dict(), epoch=epoch), best_checkpoint_path)
+        else:
+            patience_counter += 1
+            print(f"  [-] Validation BPD did not improve. Patience: {patience_counter}/{patience}")
+            if patience_counter >= patience:
+                print(f"\n[STOP] Early stopping triggered after {patience} epochs without improvement!")
+                break
         
         model.train()
 
