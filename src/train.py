@@ -35,17 +35,18 @@ def train(
     log_dir="logs",
     patience=5,
     min_delta=1e-4,
+    metrics="metrics"
 ):
     t.set_float32_matmul_precision("medium")
     
     # Setup logging directory and file paths
     os.makedirs(log_dir, exist_ok=True)
-    csv_log_path = os.path.join(log_dir, "metrics.csv")
-    json_log_path = os.path.join(log_dir, "metrics.json")
+    csv_log_path = os.path.join(log_dir, f"{metrics}.csv")
+    json_log_path = os.path.join(log_dir, f"{metrics}.json")
 
     if not os.path.exists(csv_log_path):
         with open(csv_log_path, "w") as f:
-            f.write("epoch,val_bpd,val_nll,val_logdet,lr\n")
+            f.write("epoch,train_bpd,train_nll,train_logdet,val_bpd,val_nll,val_logdet,lr\n")
 
     metrics_history = []
     best_val_bpd = float("inf")
@@ -85,10 +86,10 @@ def train(
     # Calculate exact total patch mini-batches to fix scheduler and progress bar totals
     # Unfold on (64, 128) with kernel 3, stride 1 yields: (64-3+1) * (128-3+1) = 62 * 126 = 7812 patches per image
     h, w, c = sample_shape
-    patches_per_image = ((h - 3) // 3 + 1) * ((w - 3) // 3 + 1)
-    batches_per_image = int(np.ceil(patches_per_image / batch_size))
+    patches_per_image = ((h - 3) // patch_stride + 1) * ((w - 3) // patch_stride + 1)
+    batches_per_step = int(np.ceil((patches_per_image * image_batch_size) / batch_size)) # batches per image batch size
     
-    total_steps = ((len(dataset) * batches_per_image) // accumulate_steps) * epochs
+    total_steps = ((len(dataloader) * batches_per_step) // accumulate_steps) * epochs
     warmup_steps = int(total_steps * warmup_percentage)
     
     scheduler = cosine_schedule(
@@ -104,6 +105,10 @@ def train(
         
         steps = 0
         log_bpd, log_nll, log_logdet = 0.0, 0.0, 0.0
+        
+        # Track epoch total averages for train metrics
+        epoch_train_bpd, epoch_train_nll, epoch_train_logdet = 0.0, 0.0, 0.0
+        total_train_updates = 0
         
         for image_feature_map in dataloader:
             image_feature_map = image_feature_map.to(device)
@@ -136,11 +141,20 @@ def train(
                     scheduler.step()
                     opt.zero_grad()
                     
+                    epoch_train_bpd += log_bpd
+                    epoch_train_nll += log_nll
+                    epoch_train_logdet += log_logdet
+                    total_train_updates += 1
+                    
                     pbar.update(1)
                     lr = scheduler.get_last_lr()[0]
                     pbar.set_postfix(dict(bpd=log_bpd, nll=log_nll, logdet=log_logdet, gn=gn, lr=lr))
                     
                     log_bpd, log_nll, log_logdet = 0.0, 0.0, 0.0
+
+        train_bpd = epoch_train_bpd / total_train_updates
+        train_nll = epoch_train_nll / total_train_updates
+        train_logdet = epoch_train_logdet / total_train_updates
 
         pbar.close()
         
@@ -153,7 +167,7 @@ def train(
         val_patch_batches = 0
         
         # FIX 3: Fix validation progress bar total
-        val_pbar = tqdm(total=len(val_dataset) * batches_per_image, desc="Validating", leave=False)
+        val_pbar = tqdm(total=len(val_dataloader) * batches_per_step, desc="Validating", leave=False)
         
         with t.no_grad():
             for image_feature_map in val_dataloader:
@@ -190,18 +204,24 @@ def train(
         # Log validation metrics & execute early stopping
         # -------------------------------------------------------------
         curr_lr = scheduler.get_last_lr()[0]
-        
+
         log_entry = {
             "epoch": epoch + 1,
+            "train_bpd": train_bpd,
+            "train_nll": train_nll,
+            "train_logdet": train_logdet,
             "val_bpd": val_bpd,
             "val_nll": val_nll,
             "val_logdet": val_logdet,
-            "lr": curr_lr
+            "lr": curr_lr,
         }
         metrics_history.append(log_entry)
 
         with open(csv_log_path, "a") as f:
-            f.write(f"{epoch+1},{val_bpd:.6f},{val_nll:.6f},{val_logdet:.6f},{curr_lr:.8f}\n")
+            f.write(
+                f"{epoch+1},{train_bpd:.6f},{train_nll:.6f},{train_logdet:.6f},"
+                f"{val_bpd:.6f},{val_nll:.6f},{val_logdet:.6f},{curr_lr:.8f}\n"
+            )
 
         with open(json_log_path, "w") as f:
             json.dump(metrics_history, f, indent=4)

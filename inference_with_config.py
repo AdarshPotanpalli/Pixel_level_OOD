@@ -9,7 +9,7 @@ from pathlib import Path
 
 load_dotenv()
 
-INFERENCE_OVER_A_SINGLE_IMAGE = False
+INFERENCE_OVER_A_SINGLE_IMAGE = True
 
 jet_config = dict(
     patch_size=1,
@@ -95,8 +95,9 @@ def inference_and_interpolation(JET_CHECKPOINT:str, SAMPLE_IMAGE:str, output_png
         print(f"  - Successfully saved visualization heatmap array to: {output_png}")
 
 if __name__ == "__main__":
-    SAMPLE_IMAGE = "dataset/dataset_AnomalyTrack/images/validation0000.jpg"
-    JET_CHECKPOINT = "src/jet_dino.pt"
+    # SAMPLE_IMAGE = "dataset/dataset_AnomalyTrack/images/validation0000.jpg"
+    SAMPLE_IMAGE = "dataset/cityscapes/leftImg8bit/test/berlin/berlin_000000_000019_leftImg8bit.png"
+    JET_CHECKPOINT = "src/jet_dino_100.pt"
     
     sample_images = ["dataset/dataset_AnomalyTrack/images/validation0000.jpg",
                      "dataset/dataset_AnomalyTrack/images/validation0001.jpg",
